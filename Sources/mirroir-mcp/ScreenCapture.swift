@@ -1,21 +1,25 @@
 // Copyright 2026 jfarcand@apache.org
 // Licensed under the Apache License, Version 2.0
 //
-// ABOUTME: Captures screenshots of the iPhone Mirroring window using screencapture CLI.
+// ABOUTME: Captures screenshots of the iPhone Mirroring window, ScreenCaptureKit first then the screencapture CLI.
 // ABOUTME: Returns base64-encoded PNG data suitable for MCP image responses.
 
 import CoreGraphics
 import Foundation
 import HelperLib
 
-/// Captures a target window as a screenshot using the macOS `screencapture` CLI.
-/// Uses CGWindowListCreateImage is unavailable on macOS 15+ (replaced by
-/// ScreenCaptureKit), so we shell out to `screencapture` instead.
+/// Captures a target window as a screenshot.
 ///
-/// Capture strategy:
-/// 1. Try `screencapture -l <windowID>` (window-ID capture) — works for normal windows.
-/// 2. If that fails (fullscreen / Split View windows), fall back to
-///    `screencapture -R x,y,w,h` (region capture) using the window's known bounds.
+/// Capture strategy, in order:
+/// 0. ScreenCaptureKit window capture (`ScreenCaptureKitShot`) — reaches the
+///    window on any Space without activating it, so it does not steal focus.
+/// 1. `screencapture -l <windowID>` (window-ID capture) — needs the window on the
+///    current Space, so the target is activated first.
+/// 2. `screencapture -R x,y,w,h` (region capture) — for fullscreen / Split View
+///    windows where `-l` fails, using the window's known bounds.
+///
+/// `CGWindowListCreateImage` is unavailable on macOS 15+, which is why the CLI
+/// fallback shells out rather than calling it directly.
 final class ScreenCapture: Sendable {
     private let bridge: any WindowBridging
 
@@ -28,8 +32,17 @@ final class ScreenCapture: Sendable {
     func captureWithInfo() -> CaptureResult? {
         guard let info = bridge.getWindowInfo() else { return nil }
 
-        // Activate the target so it's on the current Space — screencapture
-        // cannot capture windows on other macOS Spaces.
+        // Strategy 0: ScreenCaptureKit window capture. It reaches the window on
+        // any Space, occluded or not, so it needs no activation and never steals
+        // the user's focus. Preferred whenever a valid window ID is known.
+        if info.windowID != 0, let data = ScreenCaptureKitShot.capture(windowID: info.windowID) {
+            return CaptureResult(data: data, info: info)
+        }
+
+        // Fallback to the screencapture CLI, which cannot see another Space, so
+        // the target must be activated first. This activation steals focus and
+        // runs only on this fallback path (SCK failed: no permission, window not
+        // shareable, or timeout).
         bridge.activate()
         usleep(EnvConfig.cursorSettleUs)
 
