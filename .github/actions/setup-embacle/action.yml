@@ -19,6 +19,11 @@ runs:
         # The tap is freshly cloned per run, but update makes "latest" explicit
         # rather than a side effect of that.
         brew update --quiet
+        # The macos-15 runner image ships openssl@1.1 pre-linked, so embacle-ffi's
+        # openssl@3 dependency cannot `brew link` (/opt/homebrew/bin/openssl is
+        # owned by 1.1) and the install aborts under `set -e`. Free the stale link
+        # first so openssl@3 links cleanly; harmless when 1.1 is absent.
+        brew unlink openssl@1.1 2>/dev/null || true
         brew install embacle-ffi
         sudo mkdir -p /usr/local/lib
         sudo ln -sf "$(brew --prefix embacle-ffi)/lib/libembacle.a" /usr/local/lib/
