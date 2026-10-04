@@ -237,7 +237,7 @@ if (!skillsAvailable) {
 
 <Layout
   title="mirroir-mcp — Give your AI eyes, hands, and a real iPhone"
-  description="An MCP server that gives AI agents full control of a real iPhone through macOS iPhone Mirroring. Tell your AI what to do — it sees the screen, taps what it needs, and figures the rest out."
+  description="An MCP server that gives AI agents full control of a real iPhone through macOS iPhone Mirroring — automating apps and games. The agent sees the screen, taps what it needs, and runs QA, tutorial, and end-to-end flows."
 >
   <!-- Hero -->
   <header>
@@ -383,6 +383,17 @@ if (!skillsAvailable) {
     <div class="agent-walkthrough">
       You say <em>"send Alice a message."</em> The AI screenshots the phone, reads the screen via OCR, taps Messages, finds Alice's conversation, types your message, and hits Send. No script. No coordinates. Just intent.
     </div>
+  </section>
+
+  <!-- Games & agents -->
+  <section>
+    <h2>Games and agents</h2>
+    <p>
+      mirroir is growing archetype-aware coverage for <strong>games</strong>. A game splits into two surfaces. The <strong>shell</strong> &mdash; menu, shop, settings, win/lose screens &mdash; is ordinary text-labelled UI that today's skills already drive. The <strong>scene</strong> &mdash; the playfield &mdash; is a vision-driven loop an agent follows one touch at a time. The honest targets are game <strong>QA smoke tests, tutorial walkthroughs, and scripted demos</strong> &mdash; not real-time play: iPhone Mirroring exposes a single pointer, so twin-stick and twitch games stay out of reach.
+    </p>
+    <p>
+      Token efficiency makes the scene loop affordable. Screenshots are roughly 90% of an agent's cost, so text-rich shell screens read through <code>describe_screen</code> with no image at all, and a region/scale capture knob trims the per-frame image cost where a screenshot is unavoidable. The cost model is simple &mdash; frames &times; ~2.7k tokens, at about 3 frames per minute.
+    </p>
   </section>
 
   <!-- Describe your app -->

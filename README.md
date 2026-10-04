@@ -15,6 +15,14 @@
 
 Give your AI eyes, hands, and a real iPhone. An MCP server that lets any AI agent see the screen, tap what it needs, and figure the rest out — through macOS iPhone Mirroring. Experimental support for macOS windows. [38 tools](docs/tools.md), any MCP client.
 
+## Vision: agents that test — and play
+
+mirroir is growing archetype-aware coverage for **games**. A game splits into two surfaces. The **shell** — menu, shop, loadout, settings, win/lose screens — is ordinary text-labelled UI that today's skills already drive. The **scene** — the playfield — is a vision-driven loop an agent follows one touch at a time. The honest targets are **game QA smoke tests, tutorial walkthroughs, and scripted demos**, not real-time play: iPhone Mirroring exposes a single pointer, so twin-stick and twitch games stay out of reach (see [Games](#games)).
+
+**Token reductions** make the scene loop affordable. Screenshots are ~90% of an agent's cost, so text-rich shell screens read through `describe_screen` with no image at all, and a region/scale capture knob trims the per-frame image cost where a screenshot is unavoidable. The cost model is simple: frames × ~2.7k tokens, at ~3 frames/min.
+
+The rollout is tracked as Gaming Surface A–E — shell coverage ships first; the scene loop is measured on a real device before it widens.
+
 ## Requirements
 
 - macOS 15+
