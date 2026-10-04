@@ -9,7 +9,7 @@ DerivedData/
 .netrc
 .mcp.json
 .mcpregistry_*
-claude_docs/*
+claude_docs
 claude_code/*
 update-helper.sh
 npm/bin/mirroir-mcp-native
