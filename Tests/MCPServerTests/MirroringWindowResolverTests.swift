@@ -122,12 +122,17 @@ final class MirroringWindowResolverTests: XCTestCase {
 
     // MARK: - resume control
 
-    func testResumeControlAcceptsUnlabeledAndKnownTitles() {
-        XCTAssertTrue(MirroringWindowResolver.isResumeControl(label: nil))
-        XCTAssertTrue(MirroringWindowResolver.isResumeControl(label: "  "))
+    func testResumeControlAcceptsOnlyKnownTitles() {
         XCTAssertTrue(MirroringWindowResolver.isResumeControl(label: "Resume"))
         XCTAssertTrue(MirroringWindowResolver.isResumeControl(label: " OK "))
         XCTAssertTrue(MirroringWindowResolver.isResumeControl(label: "Réessayer"))
+    }
+
+    func testResumeControlRejectsUnlabeledButtons() {
+        // An unlabeled button is never a resume control: AX-pressing it can hit a
+        // close/quit control and terminate iPhone Mirroring (the crash vector).
+        XCTAssertFalse(MirroringWindowResolver.isResumeControl(label: nil))
+        XCTAssertFalse(MirroringWindowResolver.isResumeControl(label: "  "))
     }
 
     func testResumeControlRejectsOtherTitledButtons() {

@@ -102,11 +102,11 @@ final class MirroringBridge: Sendable {
 
     /// Press the resume control of the paused overlay.
     ///
-    /// Presses only a button `MirroringWindowResolver.isResumeControl` accepts:
-    /// the overlay's unlabeled resume button or a known resume/dismiss title.
-    /// Any other button is left alone — pressing an arbitrary first button can
-    /// close the Mirroring window and terminate the app. The lookup and the
-    /// press go through `probe`, the same reads `getState` classifies.
+    /// Presses only a button whose title `MirroringWindowResolver.isResumeControl`
+    /// accepts (a known resume/dismiss title). An unlabeled button is left alone:
+    /// pressing the overlay's first unlabeled button can be a close/quit control
+    /// that terminates the app, so it is never pressed. The lookup and the press
+    /// go through `probe`, the same reads `getState` classifies.
     func pressResume() -> Bool {
         guard let pid = processID else { return false }
         return probe.pressResumeControl(pid: pid)

@@ -58,12 +58,15 @@ enum MirroringWindowResolver {
     }
 
     /// Whether a button with `label` resumes or dismisses an interruption.
-    /// An unlabeled button is the plain resume overlay's; a labeled one must
-    /// name a known resume action, so a control that closes or quits
-    /// Mirroring is never pressed.
+    /// Only a button naming a known resume action qualifies. An unlabeled
+    /// button is explicitly NOT a resume control: AX-pressing the overlay's
+    /// first unlabeled button terminates iPhone Mirroring when that button is a
+    /// close/quit control rather than the resume one, so it is never pressed —
+    /// a paused session with only an unlabeled control is left for a manual
+    /// resume instead of risking the crash.
     static func isResumeControl(label: String?) -> Bool {
         let normalized = label?.trimmingCharacters(in: .whitespaces).lowercased() ?? ""
-        return normalized.isEmpty || resumeControlTitles.contains(normalized)
+        return resumeControlTitles.contains(normalized)
     }
 
     // MARK: - Private
