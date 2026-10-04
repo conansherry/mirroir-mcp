@@ -198,6 +198,13 @@ final class InputSimulation: Sendable {
         }
 
         logWindowState(tag, info)
+        // Make the mirror the key window before the click. A cold click on a
+        // window that is not already frontmost is swallowed by macOS
+        // click-to-focus — it raises the window instead of reaching the content,
+        // so the tap is lost. ensureTargetFrontmost no-ops when the mirror is
+        // already active (consecutive taps pay no activation cost) and activates
+        // otherwise, which is the only way the click lands. Skipping activation
+        // when merely "unobstructed" was tried and reverted — it dropped the tap.
         let changed = ensureTargetFrontmost()
         if changed {
             usleep(EnvConfig.spaceSwitchSettleUs)
