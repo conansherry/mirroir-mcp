@@ -327,6 +327,60 @@ jobs:
               print('Server dropped invalid JSON (acceptable)')
           "
 
+  build-arm64-device-artifact:
+    name: Build arm64 OCR-only device artifact
+    runs-on: macos-15-arm64
+    permissions:
+      contents: read
+    env:
+      MIRROIR_DISABLE_EMBACLE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build release without embacle FFI
+        run: swift build -c release
+
+      - name: Package and checksum arm64 native binary
+        run: |
+          set -euo pipefail
+          staging="$(mktemp -d)"
+          trap 'rm -rf "$staging"' EXIT
+          cp -L .build/release/mirroir-mcp "$staging/mirroir-mcp"
+          binary="$staging/mirroir-mcp"
+          if [[ ! -f "$binary" || -L "$binary" || ! -x "$binary" ]]; then
+            echo "::error::Staged Mirroir binary is not a regular executable"
+            exit 1
+          fi
+          archive=mirroir-mcp-darwin-arm64.tar.gz
+          archs="$(lipo -archs "$binary")"
+          if [[ "$archs" != "arm64" ]]; then
+            echo "::error::Expected only arm64, got: $archs"
+            exit 1
+          fi
+          COPYFILE_DISABLE=1 tar -czf "$archive" -C "$staging" mirroir-mcp
+          if [[ "$(tar -tzf "$archive")" != "mirroir-mcp" ]]; then
+            echo "::error::Release archive must contain only the root mirroir-mcp binary"
+            exit 1
+          fi
+          archive_bytes="$(stat -f %z "$archive")"
+          binary_bytes="$(stat -f %z "$binary")"
+          if (( archive_bytes > 16 * 1024 * 1024 || binary_bytes > 64 * 1024 * 1024 )); then
+            echo "::error::Release exceeds the multi-agent installer size limits"
+            exit 1
+          fi
+          shasum -a 256 "$archive" > SHA256SUMS
+          (cd "$staging" && shasum -a 256 mirroir-mcp) >> SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mirroir-mcp-darwin-arm64-ocr-only
+          path: |
+            mirroir-mcp-darwin-arm64.tar.gz
+            SHA256SUMS
+          if-no-files-found: error
+          retention-days: 3
+
   # The install path most people take: a machine with no embacle-ffi. Every
   # other job installs it first, so without this one the source build is never
   # link-checked the way a new user experiences it — which is how issue #38

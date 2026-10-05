@@ -56,6 +56,8 @@ The script uses `fswatch` to monitor `Sources/` for `.swift` file changes, rebui
 
 **Typing goes to the wrong app instead of iPhone** — The MCP server activates iPhone Mirroring via AppleScript before every input call. If keystrokes still land in the wrong app, check that your terminal has Accessibility permissions in System Settings. Note that focus stealing is expected — see [limitations](limitations.md#focus-stealing).
 
+**Taps work, but text does not reach the iPhone** — Try typing into the same focused field with the Mac's physical keyboard. If that also produces no characters, quit and reopen iPhone Mirroring, then retry. This restored input in one observed mirroring session; the symptom can have other causes.
+
 **Taps don't register** — Run `mirroir doctor` to check prerequisites. Verify that iPhone Mirroring is connected (not showing "Connect to your iPhone" screen) and that Accessibility permissions are granted in System Settings > Privacy & Security > Accessibility.
 
 **"Mirroring paused" screenshots** — The MCP server auto-resumes paused sessions. If it persists, click the iPhone Mirroring window manually once.

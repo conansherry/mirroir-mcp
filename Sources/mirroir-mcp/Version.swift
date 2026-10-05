@@ -8,9 +8,8 @@
 ///
 /// This is the one place the version literal lives in Swift. `MCPServer`'s
 /// `initialize` response and the routing test both read `MirroirVersion.current`,
-/// so there is no string to drift between them. The release workflow bumps this
-/// constant in lockstep with `npm/package.json` and `server.json`.
+/// so there is no second Swift version string to drift from the running binary.
 enum MirroirVersion {
     /// Semantic version (`X.Y.Z`) reported in the MCP `initialize` handshake.
-    static let current = "0.40.1"
+    static let current = "0.40.3"
 }

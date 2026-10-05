@@ -22,7 +22,7 @@ All 38 tools exposed by the MCP server. Mutating tools require [permission](perm
 | `type_text` | `text` | Type text — activates iPhone Mirroring and sends keystrokes |
 | `press_key` | `key`, `modifiers`? | Send a special key (return, escape, tab, delete, space, arrows) with optional modifiers (command, shift, option, control) |
 | `shake` | — | Trigger shake gesture (Ctrl+Cmd+Z) for undo/dev menus |
-| `launch_app` | `name` | Open app by name via Spotlight search |
+| `launch_app` | `name` | Send a Spotlight launch command and return a non-activating screenshot when available; confirm the app from the image |
 | `open_url` | `url` | Open URL in Safari |
 | `press_home` | — | Go to home screen |
 | `press_app_switcher` | — | Open app switcher |
@@ -55,9 +55,9 @@ Coordinates are in points relative to the mirroring window's top-left corner. Us
 - **Local OCR (default)** — Apple Vision OCR for text recognition. If a YOLO CoreML model is installed in `~/.mirroir-mcp/models/`, the server auto-detects it and merges icon detections — giving the AI tap targets for non-text elements (buttons, toggles, icons) that text-only OCR misses. See [Icon Detection](../README.md#icon-detection-yolo-coreml) for setup.
 - **AI Vision** — When `screenDescriberMode` is `"vision"` (or `"auto"` with the embacle FFI linked), the screenshot is sent to an AI vision model that identifies UI elements semantically — cards, tabs, buttons, navigation structure — instead of raw text fragments. See [AI Vision Mode](../README.md#ai-vision-mode-embacle) for setup.
 
-Set `scroll: true` to perform a full-page scroll before returning results. The server scrolls through the entire page, deduplicates elements across viewports, and returns all detected elements — not just those visible in the initial viewport.
+Set `scroll: true` to collect elements across viewports until the page stops changing or the scan limit is reached. With the default local OCR backend, the tool reserves 25 seconds for the scan within a typical 30-second MCP call. If OCR, capture, input, or that time budget interrupts the scan, the response says `INCOMPLETE FULL-PAGE SCAN`, includes the last captured screenshot, and marks the tool result as an error; no further swipe starts. The `scroll_exhausted` field confirms when the end of the page was observed. The optional AI Vision backend uses its own request timeout and does not have the same overall scan bound.
 
-Set `omit_screenshot: true` to return only the text description without the base64 PNG image. This saves context window space during long automation sessions where screenshots aren't needed. The `MIRROIR_OMIT_SCREENSHOT` environment variable (or `describeScreenOmitScreenshot` setting) controls the default; the tool parameter overrides it per-call.
+Set `omit_screenshot: true` to return only the text description without the base64 PNG image on successful calls. This saves context window space during long automation sessions where screenshots aren't needed. An incomplete full-page scan still includes its screenshot for diagnosis. The `MIRROIR_OMIT_SCREENSHOT` environment variable (or `describeScreenOmitScreenshot` setting) controls the default; the tool parameter overrides it per-call.
 
 ## Typing Workflow
 
@@ -73,6 +73,10 @@ Set `omit_screenshot: true` to return only the text description without the base
 **Important:** Keyboard shortcuts with modifiers (Cmd+N, Cmd+Z, etc.) do **not** work with iOS apps through iPhone Mirroring. iOS apps do not receive modifier-key combinations through the mirroring compositor. The only modifier combination that works is `shake` (Ctrl+Cmd+Z), which is a Mac-level action that iPhone Mirroring translates to a device shake.
 
 For navigating within apps, combine `spotlight` + `type_text` + `press_key`. For example: `spotlight` → `type_text "Messages"` → `press_key return` to launch Messages.
+
+## Launch App
+
+`launch_app(name: "...")` searches Spotlight and presses Return. For names written in Chinese characters, it types their pinyin to avoid relying on Universal Clipboard. A successful call means the launch command was sent; it does not establish which app opened. After Return, the screenshot step has a three-second deadline, including a one-second settling period, and captures without activating the window. Confirm the target app from the returned image before taking the next action. The screenshot may still show Spotlight or an app transition; if the image is missing or inconclusive, call `screenshot` to confirm.
 
 ## Games and Multi-Touch
 

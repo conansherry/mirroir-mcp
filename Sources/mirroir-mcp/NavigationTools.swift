@@ -20,7 +20,9 @@ extension MirroirMCP {
                 Launch an app on the mirrored iPhone by name using Spotlight search. \
                 Opens Spotlight, types the app name, and presses Return to launch \
                 the top result. The app name should match the display name shown \
-                on the iPhone home screen.
+                on the iPhone home screen. Returns a screenshot when a bounded, \
+                non-activating capture is available; confirm the app from that \
+                image before interacting.
                 """,
             inputSchema: [
                 "type": .string("object"),
@@ -50,9 +52,9 @@ extension MirroirMCP {
                 if let error = input.launchApp(name: appName) {
                     return .error(error)
                 }
-                return LaunchAppConfirmation.outcome(
-                    appName: appName, describer: ctx.describer,
-                    windowHeight: ctx.bridge.getWindowInfo().map { Double($0.size.height) }
+                return LaunchAppScreenshot.outcome(
+                    appName: appName,
+                    capture: ctx.capture as? any NonActivatingScreenCapturing
                 )
             }
         ))

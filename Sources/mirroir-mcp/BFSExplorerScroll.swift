@@ -79,6 +79,16 @@ extension BFSExplorer {
         let novelCount: Int
         let totalElements: Int
         let usedCalibrationScroller: Bool
+        let incompleteReason: String?
+
+        init(scrollCount: Int, novelCount: Int, totalElements: Int,
+             usedCalibrationScroller: Bool, incompleteReason: String? = nil) {
+            self.scrollCount = scrollCount
+            self.novelCount = novelCount
+            self.totalElements = totalElements
+            self.usedCalibrationScroller = usedCalibrationScroller
+            self.incompleteReason = incompleteReason
+        }
     }
 
     /// Phase 1 of calibration: scroll through the full page, collect all OCR elements,
@@ -100,7 +110,29 @@ extension BFSExplorer {
                 return ScrollCollectionData(
                     scrollCount: 0, novelCount: 0,
                     totalElements: graph.node(for: fingerprint)?.elements.count ?? 0,
-                    usedCalibrationScroller: true)
+                    usedCalibrationScroller: true,
+                    incompleteReason: "Initial screen capture failed")
+            }
+
+            if let reason = scrollResult.incompleteReason {
+                DebugLog.persist("bfs", "calibration full-page scan incomplete: \(reason)")
+                // A later viewport may have failed after moving the page. Restore
+                // the starting position, but do not merge a partial scan as a
+                // complete calibration or mark the graph scroll-exhausted.
+                if scrollResult.scrollCount > 0 {
+                    let centerX = windowSize.width / 2
+                    for _ in 0...scrollResult.scrollCount {
+                        _ = input.swipe(
+                            fromX: centerX, fromY: windowSize.height * 0.10,
+                            toX: centerX, toY: windowSize.height * 0.85,
+                            durationMs: 300)
+                        usleep(EnvConfig.stepSettlingDelayMs * 1000)
+                    }
+                }
+                return ScrollCollectionData(
+                    scrollCount: scrollResult.scrollCount, novelCount: 0,
+                    totalElements: graph.node(for: fingerprint)?.elements.count ?? 0,
+                    usedCalibrationScroller: true, incompleteReason: reason)
             }
 
             let novelCount = graph.mergeScrolledElements(
@@ -126,12 +158,14 @@ extension BFSExplorer {
             let centerX = windowSize.width / 2
             let bottomY = windowSize.height * 0.85
             let topY = windowSize.height * 0.10
-            for _ in 0...scrollResult.scrollCount {
-                _ = input.swipe(
-                    fromX: centerX, fromY: topY,
-                    toX: centerX, toY: bottomY, durationMs: 300
-                )
-                usleep(EnvConfig.stepSettlingDelayMs * 1000)
+            if scrollResult.scrollCount > 0 {
+                for _ in 0...scrollResult.scrollCount {
+                    _ = input.swipe(
+                        fromX: centerX, fromY: topY,
+                        toX: centerX, toY: bottomY, durationMs: 300
+                    )
+                    usleep(EnvConfig.stepSettlingDelayMs * 1000)
+                }
             }
 
             let totalElements = graph.node(for: fingerprint)?.elements.count ?? 0
@@ -152,16 +186,26 @@ extension BFSExplorer {
         let scrollToY = windowSize.height * toFraction
         var scrollsDone = 0
         var totalNovel = 0
+        var incompleteReason: String?
 
         for i in 0..<effectiveCalibrationScrollLimit {
-            _ = input.swipe(
+            if let error = input.swipe(
                 fromX: centerX, fromY: scrollFromY,
-                toX: centerX, toY: scrollToY, durationMs: 300
-            )
+                toX: centerX, toY: scrollToY, durationMs: 300) {
+                incompleteReason = "Swipe failed during calibration: \(error)"
+                break
+            }
             usleep(EnvConfig.stepSettlingDelayMs * 1000)
             scrollsDone += 1
 
-            guard let result = describer.describe() else { break }
+            guard let result = describer.describe() else {
+                incompleteReason = "Screen capture failed after calibration scroll \(scrollsDone)"
+                break
+            }
+            if let failure = result.ocrFailure {
+                incompleteReason = "OCR failed after calibration scroll \(scrollsDone): \(failure)"
+                break
+            }
             let novelCount = graph.mergeScrolledElements(
                 fingerprint: fingerprint, newElements: result.elements
             )
@@ -185,7 +229,8 @@ extension BFSExplorer {
 
         return ScrollCollectionData(
             scrollCount: scrollsDone, novelCount: totalNovel,
-            totalElements: totalElements, usedCalibrationScroller: false)
+            totalElements: totalElements, usedCalibrationScroller: false,
+            incompleteReason: incompleteReason)
     }
 
     /// Store calibration summary in the report data.

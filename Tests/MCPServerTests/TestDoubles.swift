@@ -174,7 +174,7 @@ final class StubInput: InputProviding, @unchecked Sendable {
 
 // MARK: - StubCapture
 
-final class StubCapture: ScreenCapturing, @unchecked Sendable {
+final class StubCapture: ScreenCapturing, NonActivatingScreenCapturing, @unchecked Sendable {
     var captureResult: String?
     var windowInfo: WindowInfo = WindowInfo(
         windowID: 1, position: .zero, size: CGSize(width: 410, height: 898), pid: 1
@@ -193,6 +193,8 @@ final class StubCapture: ScreenCapturing, @unchecked Sendable {
     func captureBase64() -> String? {
         captureResult
     }
+
+    func captureNonActivatingData() -> Data? { captureData() }
 }
 
 // MARK: - StubRecorder

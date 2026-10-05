@@ -5,6 +5,7 @@
 // ABOUTME: Verifies parameter validation, permission policy enforcement, and success/failure paths.
 
 import CoreGraphics
+import Foundation
 import XCTest
 import HelperLib
 @testable import mirroir_mcp
@@ -14,6 +15,7 @@ final class NavigationToolHandlerTests: XCTestCase {
     private var server: MCPServer!
     private var bridge: StubBridge!
     private var input: StubInput!
+    private var capture: StubCapture!
     private var describer: StubDescriber!
 
     override func setUp() {
@@ -22,9 +24,10 @@ final class NavigationToolHandlerTests: XCTestCase {
         server = MCPServer(policy: policy)
         bridge = StubBridge()
         input = StubInput()
+        capture = StubCapture()
         describer = StubDescriber()
         let registry = makeTestRegistry(
-            bridge: bridge, input: input, describer: describer
+            bridge: bridge, input: input, capture: capture, describer: describer
         )
         MirroirMCP.registerNavigationTools(
             server: server, registry: registry, policy: policy
@@ -91,12 +94,26 @@ final class NavigationToolHandlerTests: XCTestCase {
 
     func testLaunchAppSuccess() {
         input.launchAppResult = nil
-        describer.describeResult = ScreenDescriber.DescribeResult(
-            elements: [TapPoint(text: "Favorites", tapX: 200, tapY: 120, confidence: 0.9)],
-            screenshotBase64: "img")
+        let image = Data([1, 2, 3])
+        capture.captureResult = image.base64EncodedString()
         let response = callTool("launch_app", args: ["name": .string("Safari")])
         XCTAssertFalse(isError(response))
-        XCTAssertEqual(extractText(response), "Launched 'Safari' via Spotlight")
+        XCTAssertTrue(extractText(response)?.contains("请依据图像确认目标应用") ?? false)
+        guard case .object(let result) = response.result,
+              case .array(let content) = result["content"],
+              content.count == 2,
+              case .object(let imageObject) = content[1],
+              case .string(let encoded) = imageObject["data"] else {
+            return XCTFail("launch_app should include the captured image")
+        }
+        XCTAssertEqual(Data(base64Encoded: encoded), image)
+    }
+
+    func testLaunchAppWithoutScreenshotAsksForConfirmation() {
+        input.launchAppResult = nil
+        let response = callTool("launch_app", args: ["name": .string("Safari")])
+        XCTAssertFalse(isError(response))
+        XCTAssertTrue(extractText(response)?.contains("请调用 screenshot 确认目标应用") ?? false)
     }
 
     // MARK: - open_url

@@ -12,6 +12,12 @@ import Foundation
 /// answers. Stateless: every call resolves from the snapshots it is handed.
 enum MirroringWindowResolver {
 
+    /// The mirroring window exposes these normal toolbar buttons alongside the
+    /// video surface. They do not indicate that the phone connection is paused.
+    static let navigationControlIdentifiers: Set<String> = [
+        "app.grid.3x3", "iphone.app.switcher",
+    ]
+
     /// Button titles that dismiss a Continuity interruption overlay and free the
     /// session: the camera dialog's "OK" and the pause overlay's resume action
     /// (localized variants). Compared lower-cased.
@@ -96,7 +102,9 @@ enum MirroringWindowResolver {
     /// Whether `node` or a descendant is a button or labeled text: the
     /// content of an interruption overlay.
     private static func isInterruption(_ node: AXNodeSnapshot) -> Bool {
-        if node.role == kAXButtonRole as String { return true }
+        if node.role == kAXButtonRole as String {
+            return !navigationControlIdentifiers.contains(node.identifier ?? "")
+        }
         if node.role == kAXStaticTextRole as String,
            let label = node.label, !label.trimmingCharacters(in: .whitespaces).isEmpty {
             return true

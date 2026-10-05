@@ -248,9 +248,9 @@ extension EnvConfig {
 
     /// BCP-47 language codes passed to `VNRecognizeTextRequest.recognitionLanguages`.
     ///
-    /// When unset, Apple Vision defaults to English (`["en-US"]`). Override this
-    /// to recognise additional scripts — e.g. `["ja-JP", "en-US"]` for Japanese UI,
-    /// `["zh-Hans", "en-US"]` for Simplified Chinese, or any combination of
+    /// When unset, Apple Vision recognizes Simplified Chinese and English.
+    /// Override this to recognise additional scripts — e.g. `["ja-JP", "en-US"]`
+    /// for Japanese UI, or any combination of
     /// [Vision-supported languages](https://developer.apple.com/documentation/vision/vnrecognizetextrequest/recognitionlanguages-swift.property).
     ///
     /// Configure via `settings.json`:
@@ -263,7 +263,7 @@ extension EnvConfig {
     /// ```
     public static var ocrLanguages: [String] {
         readStringArray("ocrLanguages", envVar: "MIRROIR_OCR_LANGUAGES",
-                        default: ["en-US"])
+                        default: ["zh-Hans", "en-US"])
     }
 
     // MARK: - Screen Response

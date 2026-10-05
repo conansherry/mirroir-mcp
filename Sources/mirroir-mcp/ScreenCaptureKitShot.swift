@@ -15,28 +15,54 @@ import ScreenCaptureKit
 /// occluded or not, without bringing it forward — unlike the `screencapture` CLI,
 /// which only sees the current Space and so forces an activation that steals the
 /// user's focus. The async API is bridged to the project's synchronous capture
-/// path with a semaphore and a hard timeout: a hang falls back to nil (and the
-/// caller to the CLI), never a deadlock.
+/// path with a semaphore and a hard timeout: a hang returns nil, and ordinary
+/// captures can fall back to the CLI without blocking the MCP request loop.
 enum ScreenCaptureKitShot {
 
-    /// How long to wait for the asynchronous capture before giving up and letting
-    /// the caller fall back to the `screencapture` CLI.
-    static let timeout: DispatchTimeInterval = .seconds(10)
+    /// Keep a timed-out ScreenCaptureKit request from accumulating more work if
+    /// the framework does not promptly honor task cancellation. The worker,
+    /// rather than the caller, releases this permit when the async call exits.
+    private static let capturePermit = DispatchSemaphore(value: 1)
+
+    /// Maximum ScreenCaptureKit wait for an ordinary screenshot before the
+    /// caller tries the `screencapture` CLI.
+    static let normalTimeout: DispatchTimeInterval = .seconds(4)
+
+    /// Leave room within launch_app's three-second total screenshot budget for
+    /// window lookup and PNG encoding. This path never activates the window.
+    static let nonActivatingTimeout: DispatchTimeInterval = .seconds(2)
 
     /// Capture the window with `windowID` as PNG data, or nil if ScreenCaptureKit
     /// cannot (no Screen Recording permission, window not shareable, or timeout).
-    static func capture(windowID: CGWindowID) -> Data? {
+    static func capture(
+        windowID: CGWindowID, timeout: DispatchTimeInterval = normalTimeout
+    ) -> Data? {
+        captureData(timeout: timeout) { await captureAsync(windowID: windowID) }
+    }
+
+    /// Synchronous bridge for one async capture. Factored out so a stalled,
+    /// cancellation-unresponsive operation can be tested without ScreenCaptureKit.
+    static func captureData(
+        timeout: DispatchTimeInterval,
+        operation: @escaping @Sendable () async -> Data?
+    ) -> Data? {
+        guard capturePermit.wait(timeout: .now()) == .success else {
+            DebugLog.log("ScreenCaptureKitShot", "previous capture is still running")
+            return nil
+        }
         let semaphore = DispatchSemaphore(value: 0)
         let box = ResultBox()
 
-        Task.detached {
-            let data = await captureAsync(windowID: windowID)
+        let task = Task.detached {
+            let data = await operation()
             box.set(data)
+            capturePermit.signal()
             semaphore.signal()
         }
 
         guard semaphore.wait(timeout: .now() + timeout) == .success else {
-            DebugLog.log("ScreenCaptureKitShot", "capture timed out for window \(windowID)")
+            task.cancel()
+            DebugLog.log("ScreenCaptureKitShot", "capture timed out")
             return nil
         }
         return box.take()
@@ -44,8 +70,10 @@ enum ScreenCaptureKitShot {
 
     private static func captureAsync(windowID: CGWindowID) async -> Data? {
         do {
+            guard !Task.isCancelled else { return nil }
             let content = try await SCShareableContent.excludingDesktopWindows(
                 false, onScreenWindowsOnly: false)
+            guard !Task.isCancelled else { return nil }
             guard let window = content.windows.first(where: { $0.windowID == windowID }) else {
                 DebugLog.log("ScreenCaptureKitShot", "window \(windowID) not in shareable content")
                 return nil
@@ -60,6 +88,7 @@ enum ScreenCaptureKitShot {
 
             let image = try await SCScreenshotManager.captureImage(
                 contentFilter: filter, configuration: config)
+            guard !Task.isCancelled else { return nil }
             return png(from: image)
         } catch {
             DebugLog.log("ScreenCaptureKitShot", "capture failed for window \(windowID): \(error)")

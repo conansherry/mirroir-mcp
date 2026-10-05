@@ -130,6 +130,9 @@ extension BFSExplorer {
     ) -> CalibrationResult {
         // Stage 1: Scroll full page and collect all elements (always runs).
         let scrollData = scrollAndCollect(fingerprint: fingerprint, describer: describer, input: input)
+        if let reason = scrollData.incompleteReason {
+            return .failed("Calibration stopped because the full-page scan was incomplete: \(reason)")
+        }
 
         let allElements = graph.node(for: fingerprint)?.elements ?? []
         guard !allElements.isEmpty else {

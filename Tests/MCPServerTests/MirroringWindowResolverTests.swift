@@ -77,6 +77,16 @@ final class MirroringWindowResolverTests: XCTestCase {
         XCTAssertEqual(MirroringWindowResolver.state(of: window), .connected)
     }
 
+    func testNavigationToolbarButtonsDoNotPauseLiveMirroring() {
+        let hosting = AXNodeSnapshot(role: "AXGroup", children: [
+            AXNodeSnapshot(role: "AXButton", identifier: "app.grid.3x3", label: "主屏幕"),
+            AXNodeSnapshot(role: "AXButton", identifier: "iphone.app.switcher", label: "App切换器"),
+        ])
+        XCTAssertEqual(
+            MirroringWindowResolver.state(of: axWindow(frame: nil, hosting: hosting)),
+            .connected)
+    }
+
     func testChildrenWithoutButtonAreConnected() {
         let hosting = AXNodeSnapshot(role: "AXGroup", children: [
             AXNodeSnapshot(role: "AXGroup", children: [AXNodeSnapshot(role: "AXStaticText")]),

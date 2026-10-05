@@ -50,6 +50,31 @@ final class SpotlightDetectorTests: XCTestCase {
         XCTAssertTrue(SpotlightDetector.isSpotlightVisible(elements: elements))
     }
 
+    func testDetectsChineseSpotlight() {
+        let elements = [
+            TapPoint(text: "在App中搜索", tapX: 90, tapY: 100, confidence: 0.9),
+            TapPoint(text: "搜索 App Store", tapX: 120, tapY: 200, confidence: 0.9),
+        ]
+
+        XCTAssertTrue(SpotlightDetector.isSpotlightVisible(elements: elements))
+    }
+
+    func testDetectsChineseSpotlightWithSpacesInLabel() {
+        let elements = [
+            TapPoint(text: "在 App 中搜索", tapX: 90, tapY: 100, confidence: 0.9),
+        ]
+
+        XCTAssertTrue(SpotlightDetector.isSpotlightVisible(elements: elements))
+    }
+
+    func testDetectsChineseTopHitLabel() {
+        let elements = [
+            TapPoint(text: "最佳搜索结果", tapX: 65, tapY: 98, confidence: 0.9),
+        ]
+
+        XCTAssertTrue(SpotlightDetector.isSpotlightVisible(elements: elements))
+    }
+
     func testIsCaseInsensitive() {
         let elements = [
             TapPoint(text: "top hit", tapX: 200, tapY: 200, confidence: 0.9),

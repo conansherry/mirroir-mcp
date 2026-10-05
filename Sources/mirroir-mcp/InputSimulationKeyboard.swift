@@ -32,7 +32,8 @@ extension InputSimulation {
 
     /// Launch an app by name using Spotlight search.
     /// Opens Spotlight, types the app name, waits for results, and presses Return.
-    /// Returns nil on success, or an error message on failure.
+    /// Returns nil when the launch key was sent, or an error message on failure.
+    /// The tool handler may attach a non-activating screenshot for the caller.
     func launchApp(name: String) -> String? {
         if let stateError = ensureConnected(tag: "launchApp") {
             return stateError
@@ -47,8 +48,22 @@ extension InputSimulation {
         }
         usleep(EnvConfig.spotlightAppearanceUs)
 
-        // Step 2: Type the app name
-        let typeResult = typeText(name)
+        // Spotlight can retain the previous query when reopened. Replace it
+        // before typing so Return cannot act on an unrelated search result.
+        let selectResult = pressKey(keyName: "a", modifiers: ["command"])
+        guard selectResult.success else {
+            return selectResult.error ?? "Failed to select the Spotlight query"
+        }
+        // iOS applies Cmd+A asynchronously while Spotlight's field settles.
+        // Typing immediately can miss the field and leave the previous query.
+        usleep(EnvConfig.focusSettleUs)
+
+        // Step 2: Search Han-script names by pinyin. Cmd+V for their original
+        // characters can paste the iPhone's previous clipboard value while
+        // Universal Clipboard is still syncing (or is unavailable entirely).
+        let query = SpotlightSearchQuery.forAppName(name)
+        DebugLog.log("launchApp", "Spotlight query='\(query)'")
+        let typeResult = typeText(query)
         guard typeResult.success else {
             DebugLog.log("launchApp", "ERROR: failed to type app name")
             return typeResult.error ?? "Failed to type app name"
@@ -62,7 +77,7 @@ extension InputSimulation {
             return keyResult.error ?? "Failed to press Return"
         }
 
-        DebugLog.log("launchApp", "launched '\(name)' OK")
+        DebugLog.log("launchApp", "sent Return for '\(name)'")
         return nil
     }
 

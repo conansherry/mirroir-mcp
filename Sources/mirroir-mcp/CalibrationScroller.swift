@@ -37,11 +37,39 @@ enum CalibrationScroller {
         /// Whether the screen appears to have infinite scroll (every scroll revealed
         /// substantial new content and we hit the max scroll limit).
         let isInfiniteScroll: Bool
+        /// Why collection stopped before the available page content was read.
+        /// Nil means no capture, OCR, input, or time-budget failure occurred.
+        let incompleteReason: String?
     }
 
     /// Minimum novelty ratio (new elements / total current elements) to continue scrolling.
     /// Below this threshold, the page is considered fully revealed.
     static let exhaustionThreshold: Double = 0.10
+    /// Reserve one worst-case local OCR call plus a short swipe/settle margin.
+    /// The MCP full-page tool passes an overall deadline; other callers retain
+    /// their existing exploration budgets by omitting it.
+    static let nextViewportReserveNanoseconds: UInt64 = 20_000_000_000
+    static let describeReserveNanoseconds: UInt64 = 18_000_000_000
+
+    private static func remainingNanoseconds(
+        until deadline: DispatchTime, now: DispatchTime = .now()
+    ) -> UInt64 {
+        deadline.uptimeNanoseconds > now.uptimeNanoseconds
+            ? deadline.uptimeNanoseconds - now.uptimeNanoseconds : 0
+    }
+
+    static func canStartNextViewport(
+        deadline: DispatchTime?, now: DispatchTime = .now()
+    ) -> Bool {
+        guard let deadline else { return true }
+        return remainingNanoseconds(until: deadline, now: now)
+            >= nextViewportReserveNanoseconds
+    }
+
+    private static func canStartDescribe(deadline: DispatchTime?) -> Bool {
+        guard let deadline else { return true }
+        return remainingNanoseconds(until: deadline) >= describeReserveNanoseconds
+    }
 
     /// Scroll through a full page collecting OCR elements from each viewport.
     ///
@@ -53,16 +81,30 @@ enum CalibrationScroller {
     ///   - input: Input provider for swipe gestures.
     ///   - bridge: Window bridge for getting window dimensions.
     ///   - maxScrolls: Maximum number of scroll attempts.
-    /// - Returns: Aggregated scroll result, or nil if initial OCR fails.
+    ///   - deadline: Optional overall tool deadline. No new swipe starts unless
+    ///     at least one worst-case OCR call and gesture margin remain.
+    /// - Returns: Aggregated result with `incompleteReason` on partial failure,
+    ///   or nil if even the initial screenshot could not be captured.
     static func collectFullPage(
         describer: any ScreenDescribing,
         input: any InputProviding,
         bridge: any WindowBridging,
-        maxScrolls: Int = EnvConfig.defaultScrollMaxAttempts
+        maxScrolls: Int = EnvConfig.defaultScrollMaxAttempts,
+        deadline: DispatchTime? = nil
     ) -> ScrollResult? {
         // Start with the current viewport
+        guard canStartDescribe(deadline: deadline) else { return nil }
         guard let firstResult = describer.describe() else {
             return nil
+        }
+
+        if let failure = firstResult.ocrFailure {
+            return ScrollResult(
+                elements: [], viewpoints: [Viewpoint(index: 0, elements: [])],
+                scrollCount: 0, screenshotBase64: firstResult.screenshotBase64,
+                totalScrollOffset: 0, scrollExhausted: false,
+                isInfiniteScroll: false,
+                incompleteReason: "Initial OCR failed: \(failure)")
         }
 
         var lastScreenshot = firstResult.screenshotBase64
@@ -78,8 +120,9 @@ enum CalibrationScroller {
                 scrollCount: 0,
                 screenshotBase64: lastScreenshot,
                 totalScrollOffset: 0.0,
-                scrollExhausted: true,
-                isInfiniteScroll: false
+                scrollExhausted: false,
+                isInfiniteScroll: false,
+                incompleteReason: "Window geometry unavailable after the initial viewport"
             )
         }
 
@@ -104,8 +147,13 @@ enum CalibrationScroller {
         // so a previously measured offset is a much better approximation than the
         // swipe pixel distance (which doesn't account for scroll wheel → iOS mapping).
         var lastMeasuredOffset: Double?
+        var incompleteReason: String?
 
         for _ in 0..<maxScrolls {
+            guard canStartNextViewport(deadline: deadline) else {
+                incompleteReason = "Full-page scan stopped before another swipe to stay within the tool time budget"
+                break
+            }
             // Swipe up (scroll content down) using configurable Y positions.
             // The midpoint must land in the upper content area of the window
             // for iPhone Mirroring to accept scroll wheel events.
@@ -114,20 +162,31 @@ enum CalibrationScroller {
             let toX = centerX
             let toY = scrollToY
 
-            if input.swipe(fromX: fromX, fromY: fromY,
-                           toX: toX, toY: toY,
-                           durationMs: EnvConfig.defaultSwipeDurationMs) != nil {
+            if let error = input.swipe(fromX: fromX, fromY: fromY,
+                                       toX: toX, toY: toY,
+                                       durationMs: EnvConfig.defaultSwipeDurationMs) {
+                incompleteReason = "Swipe failed after \(scrollCount) completed scroll(s): \(error)"
                 break
             }
 
             usleep(EnvConfig.toolSettlingDelayUs)
             scrollCount += 1
 
+            guard canStartDescribe(deadline: deadline) else {
+                incompleteReason = "Full-page scan stopped after scroll \(scrollCount) to stay within the tool time budget"
+                break
+            }
+
             guard let result = describer.describe() else {
+                incompleteReason = "Screen capture failed after scroll \(scrollCount)"
                 break
             }
 
             lastScreenshot = result.screenshotBase64
+            if let failure = result.ocrFailure {
+                incompleteReason = "OCR failed after scroll \(scrollCount): \(failure)"
+                break
+            }
 
             // Check scroll exhaustion via novelty ratio.
             // If new elements are less than 10% of current viewport, the page is fully revealed.
@@ -223,7 +282,8 @@ enum CalibrationScroller {
             screenshotBase64: lastScreenshot,
             totalScrollOffset: cumulativeOffset,
             scrollExhausted: exhaustionReached,
-            isInfiniteScroll: infiniteScroll
+            isInfiniteScroll: infiniteScroll,
+            incompleteReason: incompleteReason
         )
     }
 

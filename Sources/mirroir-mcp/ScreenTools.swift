@@ -8,6 +8,26 @@ import Foundation
 import HelperLib
 
 extension MirroirMCP {
+    static let maxScreenshotSettleMs = 5_000
+    static let maxScreenshotSettleUs: UInt32 = 5_000_000
+    /// Leave room for the MCP response after the full-page scroll work stops.
+    static let fullPageDescribeBudget: DispatchTimeInterval = .seconds(25)
+
+    /// Validate before converting to UInt32 so large or fractional JSON
+    /// numbers cannot overflow, truncate, or silently use the default.
+    static func screenshotSettleTimeoutUs(
+        _ value: JSONValue?, defaultUs: UInt32
+    ) -> UInt32? {
+        guard let value else { return min(defaultUs, maxScreenshotSettleUs) }
+        guard let milliseconds = value.asNumber(),
+              milliseconds.isFinite,
+              milliseconds.rounded(.towardZero) == milliseconds,
+              milliseconds >= 0,
+              milliseconds <= Double(maxScreenshotSettleMs)
+        else { return nil }
+        return UInt32(milliseconds) * 1_000
+    }
+
     static func registerScreenTools(
         server: MCPServer,
         registry: TargetRegistry
@@ -32,15 +52,29 @@ extension MirroirMCP {
                 "properties": .object([
                     "settle_ms": .object([
                         "type": .string("integer"),
+                        "minimum": .number(0),
+                        "maximum": .number(Double(maxScreenshotSettleMs)),
                         "description": .string(
                             "How long to wait for two consecutive identical frames before "
                             + "returning, in milliseconds. 0 returns the first frame "
-                            + "immediately, which may be stale. Defaults to the "
+                            + "immediately, which may be stale. Range: 0 to 5000. Defaults to the "
                             + "frameSettleTimeoutUs setting."),
                     ]),
                 ]),
             ],
             handler: { args in
+                let requestedSettle = args["settle_ms"]
+                let defaultUs: UInt32
+                if requestedSettle == nil {
+                    defaultUs = EnvConfig.frameSettleTimeoutUs
+                } else {
+                    defaultUs = 0
+                }
+                guard let settleUs = screenshotSettleTimeoutUs(
+                    requestedSettle, defaultUs: defaultUs)
+                else {
+                    return .error("settle_ms must be an integer from 0 to 5000 milliseconds")
+                }
                 let (ctx, err) = registry.resolveForTool(args)
                 guard let ctx else { return err! }
                 let bridge = ctx.bridge
@@ -60,8 +94,6 @@ extension MirroirMCP {
 
                 // A settle window of 0 is an explicit opt-out: the caller wants
                 // the first available frame and accepts that it may be stale.
-                let settleUs = args["settle_ms"]?.asInt().map { UInt32(max(0, $0)) * 1000 }
-                    ?? EnvConfig.frameSettleTimeoutUs
                 let base64 = settleUs == 0
                     ? capture.captureBase64()
                     : capture.captureSettledBase64(timeoutUs: settleUs)
@@ -85,7 +117,9 @@ extension MirroirMCP {
                 and the screenshot image. Coordinates are in the same point system as the \
                 tap tool (0,0 = top-left of mirroring window). \
                 Set scroll to true to scroll through the full page and collect all elements \
-                with page-absolute Y coordinates.
+                with page-absolute Y coordinates. With the default local OCR \
+                backend, this mode reserves time for each viewport and reports \
+                partial results with a screenshot if OCR or capture fails.
                 """,
             inputSchema: [
                 "type": .string("object"),
@@ -103,6 +137,7 @@ extension MirroirMCP {
                 ]),
             ],
             handler: { args in
+                let callDeadline = DispatchTime.now() + fullPageDescribeBudget
                 let (ctx, err) = registry.resolveForTool(args)
                 guard let ctx else { return err! }
                 let bridge = ctx.bridge
@@ -126,27 +161,34 @@ extension MirroirMCP {
                 if scrollEnabled {
                     let input = ctx.input
                     guard let scrollResult = describer.describeFullPage(
-                        input: input, bridge: bridge
+                        input: input, bridge: bridge, deadline: callDeadline
                     ) else {
                         return .error(
                             "Failed to capture/analyze screen. Is the '\(ctx.name)' window visible?")
                     }
 
                     var lines = ["Screen elements (page-absolute tap coordinates in points):"]
+                    if let reason = scrollResult.incompleteReason {
+                        lines.append("INCOMPLETE FULL-PAGE SCAN: \(reason)")
+                        lines.append("The screenshot is the last captured viewport and may not match the phone's current position.")
+                    }
                     for el in scrollResult.elements.sorted(by: { $0.tapY < $1.tapY }) {
                         lines.append("- \"\(el.text)\" at (\(Int(el.tapX)), \(Int(el.tapY)))")
                     }
                     if scrollResult.elements.isEmpty {
-                        lines.append("(no text detected)")
+                        lines.append(scrollResult.incompleteReason == nil
+                            ? "(no text detected)" : "(no reliable text was collected)")
                     }
                     lines.append("")
-                    lines.append("_meta: scroll_count=\(scrollResult.scrollCount) total_offset=\(Int(scrollResult.totalScrollOffset)) element_count=\(scrollResult.elements.count)")
+                    lines.append("_meta: scroll_count=\(scrollResult.scrollCount) total_offset=\(Int(scrollResult.totalScrollOffset)) element_count=\(scrollResult.elements.count) scroll_exhausted=\(scrollResult.scrollExhausted)")
                     let description = lines.joined(separator: "\n")
 
-                    let scrollContent: [MCPContent] = omitScreenshot
+                    let scrollContent: [MCPContent] = omitScreenshot && scrollResult.incompleteReason == nil
                         ? [.text(description)]
                         : [.text(description), .image(scrollResult.screenshotBase64, mimeType: "image/png")]
-                    return MCPToolResult(content: scrollContent, isError: false)
+                    return MCPToolResult(
+                        content: scrollContent,
+                        isError: scrollResult.incompleteReason != nil)
                 }
 
                 guard let result = describer.describe() else {

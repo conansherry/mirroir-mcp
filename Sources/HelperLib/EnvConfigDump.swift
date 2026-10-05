@@ -26,7 +26,6 @@ extension EnvConfig {
                 ("spaceSwitchSettleUs", "\(spaceSwitchSettleUs)"),
                 ("spotlightAppearanceUs", "\(spotlightAppearanceUs)"),
                 ("searchResultsPopulateUs", "\(searchResultsPopulateUs)"),
-                ("launchVerifySettleUs", "\(launchVerifySettleUs)"),
                 ("safariLoadUs", "\(safariLoadUs)"),
                 ("addressBarActivateUs", "\(addressBarActivateUs)"),
                 ("preReturnUs", "\(preReturnUs)"),

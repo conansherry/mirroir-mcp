@@ -100,12 +100,28 @@ extension MirroirMCP {
                         return .error(
                             "Failed to capture/analyze screen. Is the '\(ctx.name)' window visible?")
                     }
+                    if let reason = scrollResult.incompleteReason {
+                        return MCPToolResult(
+                            content: [
+                                .text("Component calibration stopped: full-page scan incomplete: \(reason)"),
+                                .image(scrollResult.screenshotBase64, mimeType: "image/png"),
+                            ],
+                            isError: true)
+                    }
                     elements = scrollResult.elements
                     screenshotBase64 = scrollResult.screenshotBase64
                 } else {
                     guard let result = describer.describe() else {
                         return .error(
                             "Failed to capture/analyze screen. Is the '\(ctx.name)' window visible?")
+                    }
+                    if let failure = result.ocrFailure {
+                        return MCPToolResult(
+                            content: [
+                                .text("Component calibration stopped: OCR failed: \(failure)"),
+                                .image(result.screenshotBase64, mimeType: "image/png"),
+                            ],
+                            isError: true)
                     }
                     elements = result.elements
                     screenshotBase64 = result.screenshotBase64

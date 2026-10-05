@@ -30,7 +30,7 @@ Env-var names are derived from the camelCase key by inserting `_` before every u
 | `ocrRecognitionLevel` | `"accurate"` | Apple Vision OCR quality: `"accurate"` or `"fast"` |
 | `ocrLanguageCorrection` | `true` | Enable language correction during OCR text recognition |
 | `ocrMinImageWidth` | `600` | Minimum screenshot pixel width before OCR. Images narrower than this are upscaled before text recognition to improve detection on small zoom modes |
-| `ocrLanguages` | `["en-US"]` | BCP-47 language codes for `VNRecognizeTextRequest.recognitionLanguages`. Add languages to recognise non-Latin scripts (e.g. `["ja-JP","en-US"]`). Also configurable via `MIRROIR_OCR_LANGUAGES` env var (comma-separated) |
+| `ocrLanguages` | `["zh-Hans","en-US"]` | BCP-47 language codes for `VNRecognizeTextRequest.recognitionLanguages`. Add languages to recognise other scripts (e.g. `["ja-JP","en-US"]`). Also configurable via `MIRROIR_OCR_LANGUAGES` env var (comma-separated) |
 | `describeScreenOmitScreenshot` | `false` | Omit the screenshot image from `describe_screen` responses to save context window space in long automation sessions |
 | `yoloModelURL` | `""` | URL to download a YOLO `.mlmodel` on first use |
 | `yoloModelPath` | `""` | Local path to a pre-compiled `.mlmodelc` directory (overrides download) |

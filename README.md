@@ -30,6 +30,8 @@ The rollout is tracked as Gaming Surface A–E — shell coverage ships first; t
 
 ## Install
 
+The installer, npm, and Homebrew commands below install [jfarcand's upstream release](https://github.com/jfarcand/mirroir-mcp), not the changes in this fork.
+
 ```bash
 /bin/bash -c "$(curl -fsSL https://mirroir.dev/get-mirroir.sh)"
 ```
@@ -47,6 +49,8 @@ brew tap jfarcand/tap && brew install mirroir-mcp
 ```
 
 The first time you take a screenshot, macOS will prompt for **Screen Recording** and **Accessibility** permissions. Grant both.
+
+To use [this fork](https://github.com/conansherry/mirroir-mcp) on a multi-agent Mac node, clone it, build it with the current Xcode (`swift build -c release`), and configure the node's Mirroir MCP executable as the absolute path to that clone's `.build/release/mirroir-mcp`. A node installer can package and pin that same fork build. Grant macOS permissions to the exact executable the node runs. This fork's `launch_app` includes a bounded screenshot when available: confirm the target app from the image before interacting, or call `screenshot` if no image was returned.
 
 <details>
 <summary>Per-client setup</summary>

@@ -12,21 +12,28 @@ import ImageIO
 /// Runs OCR on the iPhone Mirroring window screenshot and returns detected
 /// text elements with their tap coordinates in the mirroring window's point space.
 final class ScreenDescriber: Sendable {
+    /// Leaves time for capture and response encoding within a 30-second MCP call.
+    static let defaultDescribeBudget: DispatchTimeInterval = .seconds(18)
+
     private let bridge: any WindowBridging
     private let capture: any ScreenCapturing
     private let textRecognizer: any TextRecognizing
     private let isMobile: Bool
+    private let describeBudget: DispatchTimeInterval
+    private let ocrGate = OCRExecutionGate.shared
 
     init(
         bridge: any WindowBridging,
         capture: any ScreenCapturing,
         textRecognizer: any TextRecognizing = AppleVisionTextRecognizer(),
-        isMobile: Bool = true
+        isMobile: Bool = true,
+        describeBudget: DispatchTimeInterval = defaultDescribeBudget
     ) {
         self.bridge = bridge
         self.capture = capture
         self.textRecognizer = textRecognizer
         self.isMobile = isMobile
+        self.describeBudget = describeBudget
     }
 
     /// Result of a describe operation: detected elements, unlabeled icons, navigation hints,
@@ -57,8 +64,16 @@ final class ScreenDescriber: Sendable {
     /// Capture the mirroring window, run OCR, and return detected text elements
     /// with their tap coordinates plus the screenshot as base64 PNG.
     func describe() -> DescribeResult? {
+        let deadline = DispatchTime.now() + describeBudget
         // Single capture call resolves window info and screenshot together
-        guard let result = capture.captureWithInfo() else { return nil }
+        let captureStart = CFAbsoluteTimeGetCurrent()
+        guard let result = capture.captureWithInfo() else {
+            let captureMs = Int((CFAbsoluteTimeGetCurrent() - captureStart) * 1000)
+            DebugLog.log("ScreenDescriber", "capture failed after \(captureMs)ms")
+            return nil
+        }
+        let captureMs = Int((CFAbsoluteTimeGetCurrent() - captureStart) * 1000)
+        DebugLog.log("ScreenDescriber", "capture time=\(captureMs)ms")
         let info = result.info
         let data = result.data
 
@@ -89,12 +104,20 @@ final class ScreenDescriber: Sendable {
         var rawElements: [RawTextElement] = []
         var ocrFailure: String?
         do {
-            rawElements = try textRecognizer.recognizeText(
-                in: ocrImage, windowSize: info.size, contentBounds: contentBounds
+            rawElements = try ocrGate.recognize(
+                using: textRecognizer, image: ocrImage,
+                windowSize: info.size, contentBounds: contentBounds,
+                deadline: deadline
             )
         } catch {
             ocrFailure = String(describing: error)
             DebugLog.persist("OCR", "text recognition failed: \(ocrFailure ?? "")")
+            if error is OCRExecutionError {
+                let ocrMs = Int((CFAbsoluteTimeGetCurrent() - ocrStart) * 1000)
+                return DescribeResult(
+                    elements: [], screenshotBase64: data.base64EncodedString(),
+                    ocrTimeMs: ocrMs, ocrFailure: ocrFailure)
+            }
         }
         let ocrMs = Int((CFAbsoluteTimeGetCurrent() - ocrStart) * 1000)
         DebugLog.log("OCR", "level=\(EnvConfig.ocrRecognitionLevel) elements=\(rawElements.count) time=\(ocrMs)ms")
@@ -129,4 +152,98 @@ final class ScreenDescriber: Sendable {
                               ocrFailure: ocrFailure)
     }
 
+}
+
+/// Limits the process to a single Vision request even when a timed-out request
+/// continues inside Apple's synchronous OCR API. The regular and launch
+/// verification describers therefore cannot pile work onto each other.
+private final class OCRExecutionGate: @unchecked Sendable {
+    static let shared = OCRExecutionGate()
+
+    private let queue = DispatchQueue(label: "mirroir.screen-ocr", qos: .userInitiated)
+    private let permit = DispatchSemaphore(value: 1)
+
+    func recognize(
+        using recognizer: any TextRecognizing, image: CGImage,
+        windowSize: CGSize, contentBounds: CGRect, deadline: DispatchTime
+    ) throws -> [RawTextElement] {
+        guard DispatchTime.now().uptimeNanoseconds < deadline.uptimeNanoseconds else {
+            throw OCRExecutionError.timedOut
+        }
+        guard permit.wait(timeout: .now()) == .success else {
+            throw OCRExecutionError.busy
+        }
+        guard DispatchTime.now().uptimeNanoseconds < deadline.uptimeNanoseconds else {
+            permit.signal()
+            throw OCRExecutionError.timedOut
+        }
+
+        let work = OCRWork(
+            recognizer: recognizer, image: image, windowSize: windowSize,
+            contentBounds: contentBounds, permit: permit)
+        queue.async { work.run() }
+        guard work.finished.wait(timeout: deadline) == .success else {
+            throw OCRExecutionError.timedOut
+        }
+        guard let result = work.result else {
+            throw OCRExecutionError.missingResult
+        }
+        return try result.get()
+    }
+}
+
+private enum OCRExecutionError: Error, CustomStringConvertible {
+    case busy
+    case timedOut
+    case missingResult
+
+    var description: String {
+        switch self {
+        case .busy:
+            return "OCR busy: a previous recognition request is still running"
+        case .timedOut:
+            return "OCR timed out before the describe_screen deadline"
+        case .missingResult:
+            return "OCR finished without a recognition result"
+        }
+    }
+}
+
+/// Owns the image and recognizer until a synchronous Vision call has actually
+/// returned. The completion semaphore orders the result write before its read.
+private final class OCRWork: @unchecked Sendable {
+    let finished = DispatchSemaphore(value: 0)
+    private let recognizer: any TextRecognizing
+    private let image: CGImage
+    private let windowSize: CGSize
+    private let contentBounds: CGRect
+    private let permit: DispatchSemaphore
+    private let lock = NSLock()
+    private var storedResult: Result<[RawTextElement], any Error>?
+
+    var result: Result<[RawTextElement], any Error>? {
+        lock.withLock { storedResult }
+    }
+
+    init(
+        recognizer: any TextRecognizing, image: CGImage,
+        windowSize: CGSize, contentBounds: CGRect,
+        permit: DispatchSemaphore
+    ) {
+        self.recognizer = recognizer
+        self.image = image
+        self.windowSize = windowSize
+        self.contentBounds = contentBounds
+        self.permit = permit
+    }
+
+    func run() {
+        let outcome = Result {
+            try recognizer.recognizeText(
+                in: image, windowSize: windowSize, contentBounds: contentBounds)
+        }
+        lock.withLock { storedResult = outcome }
+        permit.signal()
+        finished.signal()
+    }
 }

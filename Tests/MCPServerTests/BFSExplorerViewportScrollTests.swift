@@ -183,6 +183,35 @@ extension BFSExplorerScrollTests {
             "Should perform exactly 2 forward calibration swipes via the bridge path")
     }
 
+    func testCalibrationStopsWhenInitialFullPageOCRFails() {
+        let session = ExplorationSession()
+        session.start(appName: "TestApp", goal: "test")
+        session.capture(
+            elements: makeElements(["Settings"]), hints: [], icons: [],
+            actionType: nil, arrivedVia: nil, screenshotBase64: "img0")
+        let explorer = BFSExplorer(
+            session: session, budget: .default, bridge: StubWindowBridge())
+        let describer = MockExplorerDescriber(screens: [
+            ScreenDescriber.DescribeResult(
+                elements: [], screenshotBase64: "img-failure",
+                ocrFailure: "OCR timed out")
+        ])
+        let input = MockExplorerInput()
+
+        let outcome = explorer.calibrateScreen(
+            fingerprint: session.currentGraph.rootFingerprint,
+            describer: describer, input: input)
+
+        guard case .failed(let reason) = outcome else {
+            return XCTFail("incomplete OCR must stop calibration")
+        }
+        XCTAssertTrue(reason.contains("OCR timed out"))
+        XCTAssertTrue(input.swipes.isEmpty,
+                      "no forward or restoration swipe is valid before the first OCR succeeds")
+        XCTAssertFalse(session.currentGraph.node(
+            for: session.currentGraph.rootFingerprint)?.scrollExhausted ?? true)
+    }
+
     /// Without skipCalibration, scroll-exhausted screens should NOT scroll further.
     func testScrollExhaustedBlocksWithoutSkipCalibration() {
         let session = ExplorationSession()

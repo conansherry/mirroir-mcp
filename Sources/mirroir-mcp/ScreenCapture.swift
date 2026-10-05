@@ -5,6 +5,7 @@
 // ABOUTME: Returns base64-encoded PNG data suitable for MCP image responses.
 
 import CoreGraphics
+import Darwin
 import Foundation
 import HelperLib
 
@@ -20,9 +21,17 @@ import HelperLib
 ///
 /// `CGWindowListCreateImage` is unavailable on macOS 15+, which is why the CLI
 /// fallback shells out rather than calling it directly.
-final class ScreenCapture: Sendable {
-    private let bridge: any WindowBridging
+final class ScreenCapture: NonActivatingScreenCapturing, Sendable {
 
+    /// Maximum wait for each CLI fallback. Combined with the ScreenCaptureKit
+    /// wait, a normal capture stays well below an MCP client's 30-second limit.
+    static let cliTimeoutSeconds = 3
+
+    /// Bounded grace period after each termination signal so a timed-out CLI
+    /// capture exits before its temporary screenshot is removed.
+    static let cliTerminationGraceSeconds = 1
+
+    private let bridge: any WindowBridging
     init(bridge: any WindowBridging) {
         self.bridge = bridge
     }
@@ -35,7 +44,8 @@ final class ScreenCapture: Sendable {
         // Strategy 0: ScreenCaptureKit window capture. It reaches the window on
         // any Space, occluded or not, so it needs no activation and never steals
         // the user's focus. Preferred whenever a valid window ID is known.
-        if info.windowID != 0, let data = ScreenCaptureKitShot.capture(windowID: info.windowID) {
+        if info.windowID != 0,
+           let data = ScreenCaptureKitShot.capture(windowID: info.windowID) {
             return CaptureResult(data: data, info: info)
         }
 
@@ -46,11 +56,8 @@ final class ScreenCapture: Sendable {
         bridge.activate()
         usleep(EnvConfig.cursorSettleUs)
 
-        let tempPath = NSTemporaryDirectory()
-            + "mirroir-mcp-\(ProcessInfo.processInfo.processIdentifier).png"
-
         // Strategy 1: window-ID capture (requires valid CGWindowID)
-        if info.windowID != 0, let data = captureByWindowID(info.windowID, to: tempPath) {
+        if info.windowID != 0, let data = captureByWindowID(info.windowID) {
             return CaptureResult(data: data, info: info)
         }
 
@@ -59,7 +66,7 @@ final class ScreenCapture: Sendable {
             DebugLog.log("ScreenCapture",
                 "Window-ID capture failed for \(info.windowID), falling back to region capture")
         }
-        guard let data = captureByRegion(info, to: tempPath) else { return nil }
+        guard let data = captureByRegion(info) else { return nil }
         return CaptureResult(data: data, info: info)
     }
 
@@ -69,35 +76,46 @@ final class ScreenCapture: Sendable {
     /// Capture the target window and return base64-encoded PNG.
     func captureBase64() -> String? { captureData()?.base64EncodedString() }
 
+    /// Capture only through ScreenCaptureKit. It can read an occluded window
+    /// without changing focus and never falls back to the activating CLI path.
+    func captureNonActivatingData() -> Data? {
+        guard let info = bridge.getWindowInfo(), info.windowID != 0 else { return nil }
+        return ScreenCaptureKitShot.capture(
+            windowID: info.windowID,
+            timeout: ScreenCaptureKitShot.nonActivatingTimeout)
+    }
+
     // Settled capture is a default capability of every ScreenCapturing
     // implementation — see the protocol extension at the bottom of this file.
 
     // MARK: - Capture strategies
 
     /// Capture a specific window by its CGWindowID using `screencapture -l`.
-    private func captureByWindowID(_ windowID: CGWindowID, to path: String) -> Data? {
+    private func captureByWindowID(_ windowID: CGWindowID) -> Data? {
         return runScreencapture(
-            arguments: ["-l", String(windowID), "-x", "-o", path],
-            outputPath: path
+            arguments: ["-l", String(windowID), "-x", "-o"]
         )
     }
 
     /// Capture a screen region matching the window bounds using `screencapture -R`.
     /// This works for fullscreen and Split View windows where -l fails.
-    private func captureByRegion(_ info: WindowInfo, to path: String) -> Data? {
+    private func captureByRegion(_ info: WindowInfo) -> Data? {
         let region = "\(Int(info.position.x)),\(Int(info.position.y)),"
             + "\(Int(info.size.width)),\(Int(info.size.height))"
         return runScreencapture(
-            arguments: ["-R", region, "-x", "-o", path],
-            outputPath: path
+            arguments: ["-R", region, "-x", "-o"]
         )
     }
 
     /// Run screencapture with the given arguments and read the output file.
-    private func runScreencapture(arguments: [String], outputPath: String) -> Data? {
+    private func runScreencapture(arguments: [String]) -> Data? {
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mirroir-mcp-\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-        process.arguments = arguments
+        process.arguments = arguments + [fileURL.path]
 
         do {
             try process.run()
@@ -105,21 +123,38 @@ final class ScreenCapture: Sendable {
             return nil
         }
 
-        guard case .exited(let status) = process.waitWithTimeout(seconds: 10) else {
-            process.terminate()
+        guard case .exited(let status) = process.waitWithTimeout(seconds: Self.cliTimeoutSeconds) else {
+            stopTimedOutCapture(process, outputURL: fileURL)
             return nil
         }
 
         guard status == 0 else { return nil }
-
-        let fileURL = URL(fileURLWithPath: outputPath)
-        defer { try? FileManager.default.removeItem(at: fileURL) }
 
         do {
             return try Data(contentsOf: fileURL)
         } catch {
             DebugLog.log("ScreenCapture", "Failed to read screenshot: \(error)")
             return nil
+        }
+    }
+
+    /// Stop a stalled screencapture process before removing its output file.
+    /// If the OS does not reap it within the bounded waits, clean up again when
+    /// termination eventually arrives so it cannot leave a late-written PNG.
+    private func stopTimedOutCapture(_ process: Process, outputURL: URL) {
+        guard process.isRunning else { return }
+        process.terminate()
+        if case .exited = process.waitWithTimeout(seconds: Self.cliTerminationGraceSeconds) {
+            return
+        }
+
+        if process.isRunning {
+            _ = Darwin.kill(process.processIdentifier, SIGKILL)
+        }
+        if case .timedOut = process.waitWithTimeout(seconds: Self.cliTerminationGraceSeconds) {
+            process.terminationHandler = { _ in
+                try? FileManager.default.removeItem(at: outputURL)
+            }
         }
     }
 }
@@ -147,12 +182,13 @@ extension ScreenCapturing {
     func captureSettledWithInfo(
         timeoutUs: UInt32 = EnvConfig.frameSettleTimeoutUs
     ) -> CaptureResult? {
-        guard var previous = captureWithInfo() else { return nil }
         let deadline = DispatchTime.now().uptimeNanoseconds
             + (UInt64(timeoutUs) * UInt64(NSEC_PER_USEC))
+        guard var previous = captureWithInfo() else { return nil }
 
         while DispatchTime.now().uptimeNanoseconds < deadline {
             usleep(EnvConfig.frameSettlePollUs)
+            guard DispatchTime.now().uptimeNanoseconds < deadline else { break }
             guard let current = captureWithInfo() else { return previous }
             if FrameFingerprint.sameContent(previous.data, current.data) {
                 return current

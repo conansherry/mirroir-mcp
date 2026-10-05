@@ -241,6 +241,12 @@ protocol ScreenCapturing: Sendable {
     func captureBase64() -> String?
 }
 
+/// A screenshot path that never activates or changes the focused window.
+/// `launch_app` uses this optional capability to show what opened without OCR.
+protocol NonActivatingScreenCapturing: Sendable {
+    func captureNonActivatingData() -> Data?
+}
+
 /// Abstracts video recording of the mirroring window.
 protocol ScreenRecording: Sendable {
     func startRecording(outputPath: String?) -> String?
@@ -301,7 +307,9 @@ protocol ScreenDescribing: Sendable {
     ///   - input: Input provider for scroll gestures.
     ///   - bridge: Window bridge for getting window dimensions.
     ///   - maxScrolls: Maximum number of scroll attempts.
-    /// - Returns: The scroll result with all unique elements, or nil if OCR failed.
+    /// - Returns: The scroll result with unique elements and an
+    ///   `incompleteReason` when collection stopped early, or nil if the
+    ///   initial screenshot could not be captured.
     func describeFullPage(
         input: any InputProviding,
         bridge: any WindowBridging,
@@ -318,6 +326,21 @@ extension ScreenDescribing {
         CalibrationScroller.collectFullPage(
             describer: self, input: input,
             bridge: bridge, maxScrolls: maxScrolls
+        )
+    }
+
+    /// Full-page collection with a deadline shared across all viewports.
+    /// Used by the MCP tool so scrolling cannot queue repeated OCR calls beyond
+    /// its response budget; exploration callers use their own budgets above.
+    func describeFullPage(
+        input: any InputProviding,
+        bridge: any WindowBridging,
+        deadline: DispatchTime,
+        maxScrolls: Int = EnvConfig.defaultScrollMaxAttempts
+    ) -> CalibrationScroller.ScrollResult? {
+        CalibrationScroller.collectFullPage(
+            describer: self, input: input, bridge: bridge,
+            maxScrolls: maxScrolls, deadline: deadline
         )
     }
 }

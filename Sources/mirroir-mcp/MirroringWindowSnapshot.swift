@@ -11,14 +11,18 @@ import CoreGraphics
 struct AXNodeSnapshot: Sendable, Equatable {
     /// AX role, e.g. `AXButton`, `AXGroup`, `AXStaticText`.
     let role: String?
+    /// Stable accessibility identifier, when the application exposes one.
+    let identifier: String?
     /// The node's title, else its description, else its string value (the
     /// words of static text).
     let label: String?
     /// Child nodes, depth-bounded by the probe that built the snapshot.
     let children: [AXNodeSnapshot]
 
-    init(role: String?, label: String? = nil, children: [AXNodeSnapshot] = []) {
+    init(role: String?, identifier: String? = nil, label: String? = nil,
+         children: [AXNodeSnapshot] = []) {
         self.role = role
+        self.identifier = identifier
         self.label = label
         self.children = children
     }
